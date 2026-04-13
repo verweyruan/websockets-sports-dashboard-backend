@@ -3,6 +3,8 @@ import { createMatchSchema, listMatchesQuerySchema } from "../validation/matches
 import { db } from "../db/db.js"
 import { getMatchStatus } from "../utils/match-status";
 import { desc } from "drizzle-orm";
+import { matches } from "../db/schema.js";
+import { MATCH_STATUS } from "../validation/matches.js";
 
 export const matchRouter = Router();
 
@@ -12,14 +14,13 @@ matchRouter.get('/', async (req, res) => {
     const parsed = listMatchesQuerySchema.safeParse(req.query);
 
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: JSON.stringify(parsed.error) });
+        return res.status(400).json({ error: 'Invalid query', details: parsed.error.issues });
     }
 
     const limit = Math.min(parsed.data.limit ?? 50, MAX_LIMIT);
 
     try {
-        const data = await db.select().from.orderby((desc(matches.createdAt))).limit(limit)
-
+        const data = await db.select().from(matches).orderBy(desc(matches.createdAt)).limit(limit);
         res.json({ data });
 
     } catch (e) {
@@ -29,11 +30,12 @@ matchRouter.get('/', async (req, res) => {
 
 matchRouter.post('/', async (req, res) => {
     const parsed = createMatchSchema.safeParse(req.body);
-    const { data: { startTime, endTime, homeScore, awayScore } } = parsed;
 
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid Payload', details: JSON.stringify(parsed.error) });
+        return res.status(400).json({ error: 'Invalid Payload', details: parsed.error.issues});
     }
+
+    const { startTime, endTime, homeScore, awayScore } = parsed.data;
 
     try {
         const [event] = await db.insert(matches).values({
@@ -42,11 +44,12 @@ matchRouter.post('/', async (req, res) => {
             endTime: new Date(endTime),
             homeScore: homeScore ?? 0,
             awayScore: awayScore ?? 0,
-            status: getMatchStatus(startTime, endTime),
+            status: getMatchStatus(startTime, endTime) ?? MATCH_STATUS.SCHEDULED,
         }).returning();
 
         res.status(201).json({ data: event });
     } catch (e) {
-        res.status(500).json({ error: 'Failed to create match.', details: JSON.stringify(e) });
+        console.error('Failed to create match:', e);
+        res.status(500).json({ error: 'Failed to create match.' });
     }
 })
